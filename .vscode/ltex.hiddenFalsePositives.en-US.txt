@@ -1,0 +1,1 @@
+{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"^\\QEach plugin has an identifier (ThemeSongs → theme-songs)\\E$"}
