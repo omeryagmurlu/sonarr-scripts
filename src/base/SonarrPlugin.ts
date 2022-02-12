@@ -1,31 +1,50 @@
 import { Sonarr } from "@jc21/sonarr-api";
+import throttle from "lodash.throttle";
 import { Download, Grab, Rename, SonarrWebhook, Test } from "../interfaces/SonarrWebhook";
+import { BasePlugin, PluginMethods } from "./BasePlugin";
 
-export abstract class SonarrPlugin {
-    private _sonarr?: Sonarr;
-    constructor(obj: { url: string, apiKey: string } | null = null) {
-        if (!obj) return;
-        const { url, apiKey } = obj;
-        this._sonarr = SonarrPlugin.getSonarr(url, apiKey);
+const BACKOFF =  30 * 60 * 1000; // 30 minutes wait time for every ping
+
+type SonarrPluginParams = {
+    url: string,
+    apiKey: string,
+}
+
+export abstract class SonarrPlugin extends BasePlugin<SonarrPluginParams, SonarrWebhook> {
+    abstract onGrab(event: Grab, sonarr: Sonarr, url: string): Promise<void>
+    abstract onDownload(event: Download, sonarr: Sonarr, url: string): Promise<void>
+    abstract onRename(event: Rename, sonarr: Sonarr, url: string): Promise<void>
+    abstract onTest(event: Test, sonarr: Sonarr, url: string): Promise<void>
+    abstract onAny(event: SonarrWebhook, sonarr: Sonarr, url: string): Promise<void>
+    
+    method: PluginMethods = 'post';
+    validateParams(params: any) {
+        // TODO: validation
+        return params as SonarrPluginParams
+    }
+    validateData(data: any) {
+        // TODO: validation
+        return data as SonarrWebhook
     }
 
-    get sonarr() {
-        if (!this._sonarr) throw new Error('no sonarr instance available')
-        return this._sonarr;
-    }
-
-    static getSonarr(url: string, apiKey: string) {
+    private wm: Record<string, (event: SonarrWebhook, sonarr: Sonarr, url: string) => Promise<void>> = {}
+    private static ws: Record<string, Sonarr> = {};
+    private static getSonarr(url: string, apiKey: string) {
+        SonarrPlugin.ws[`${url} !&! ${apiKey}`] = SonarrPlugin.ws[`${url} !&! ${apiKey}`] || new Sonarr(new URL(url), apiKey);
         return new Sonarr(new URL(url), apiKey);
     }
 
-    public identifier: string = '__id__';
+    protected run = async ({ url, apiKey }: SonarrPluginParams, json: SonarrWebhook) => {
+        
+        const hookSonarr = SonarrPlugin.getSonarr(url, apiKey);
+        this.wm[url] = this.wm[url] || throttle(this.onAny.bind(this), BACKOFF)
 
-    async onGrab(event: Grab, sonarr: Sonarr, url: string) {}
-    async onDownload(event: Download, sonarr: Sonarr, url: string) {}
-    async onRename(event: Rename, sonarr: Sonarr, url: string) {}
-    async onTest(event: Test, sonarr: Sonarr, url: string) {}
-    async onAny(event: SonarrWebhook, sonarr: Sonarr, url: string) {}
-
-    init() {}
-    scheduled() {}
+        await this.wm[url](json, hookSonarr, url)
+        switch (json.eventType) {
+            case "Download": return await this.onDownload(json as Download, hookSonarr, url)
+            case "Grab": return await this.onGrab(json as Grab, hookSonarr, url)
+            case "Rename": return await this.onRename(json as Rename, hookSonarr, url)
+            case "Test": return await this.onTest(json as Test, hookSonarr, url)
+        }
+    }
 }

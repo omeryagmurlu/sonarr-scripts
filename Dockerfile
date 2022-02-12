@@ -20,4 +20,5 @@ ENV NODE_ENV=production
 COPY --from=ts-remover /app ./
 
 USER 1000
+EXPOSE 3000
 CMD ["dist/index.js"]

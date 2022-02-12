@@ -1,14 +1,11 @@
-import { ISeries, Sonarr } from "@jc21/sonarr-api";
-import throttle from "lodash.throttle";
+import { Sonarr } from "@jc21/sonarr-api";
 import { SonarrPlugin } from "../base/SonarrPlugin"
-import { Download, Test } from "../interfaces/SonarrWebhook";
-import { log } from "../log";
+import { Download, Grab, Rename, Test } from "../interfaces/SonarrWebhook";
+import { log, trace, warn } from "../log";
 import http from 'https';
 import { access } from 'fs/promises';
 import { createWriteStream, constants } from 'fs';
 import path from 'path'
-
-const BACKOFF =  30 * 60 * 1000; // 30 minutes wait time for every ping
 
 interface BaseSerie {
     path: string,
@@ -18,18 +15,18 @@ interface BaseSerie {
 
 // currently uses plex, but this seems (somewhat) promising too: https://github.com/EOussama/anusic-api
 export class ThemeSong extends SonarrPlugin {
-    public identifier = 'theme-songs'
-    private wm: Record<string, () => Promise<void>> = {}
+    async onGrab(event: Grab, sonarr: Sonarr, url: string) {}
+    async onRename(event: Rename, sonarr: Sonarr, url: string) {}
+    async onTest(event: Test, sonarr: Sonarr, url: string) {}
+    
+    identifier = 'theme-songs'
 
     async onAny(event: Test, sonarr: Sonarr, url: string) {
-        this.wm[url] = this.wm[url] || throttle(async () => {
-            log('Downloading all theme songs');
-            const shows = await sonarr.shows();
-            log('Got show list from sonarr');
+        log('Downloading all theme songs');
+        const shows = await sonarr.shows();
+        log(`Got show list from sonarr, total: ${shows.length}`);
 
-            await Promise.all(shows.map(async show => this.downloadShow(show)))
-        }, BACKOFF);
-        return this.wm[url]();
+        await Promise.all(shows.map(async show => this.downloadShow(show)))
     }
 
     async onDownload(event: Download) {
@@ -53,12 +50,12 @@ export class ThemeSong extends SonarrPlugin {
         
         http.get(addr, res => {
             if (res.statusCode! >= 400) {
-                log(`Can't download '${show.title}' theme song from ${addr}`);
+                warn(`Can't download '${show.title}' theme song from ${addr}`);
                 return;
             }
             const file = createWriteStream(pt);
             res.pipe(file);
-            log(`Downloaded ${show.title} theme song`)
+            trace(`Downloaded ${show.title} theme song`)
         })
     }
 }

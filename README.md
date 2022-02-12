@@ -1,9 +1,14 @@
 # Various Sonarr webhook plugins
 
-Currently there is only one plugin:
+Currently there are only two plugins:
 
-- ThemeSongs
+- ThemeSongs:
+
 Downloads theme songs from plex and places them in the media folder.
+
+- NFOThumbRemover:
+
+Removes `<thumb>` entries from .nfo files created by sonarr. Stopgap measure till this gets released: https://github.com/jellyfin/jellyfin/pull/7286
 
 ## Usage
 
