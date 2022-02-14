@@ -1,6 +1,6 @@
 import { Sonarr } from "@jc21/sonarr-api";
-import { SonarrPlugin } from "../base/SonarrPlugin"
-import { Download, Grab, Rename, Test } from "../interfaces/SonarrWebhook";
+import { SonarrPlugin } from "../base/sonarr"
+import { Download, Grab, Rename, Test } from "../base/sonarr/SonarrWebhook";
 import { log, trace, warn } from "../log";
 import http from 'https';
 import { access } from 'fs/promises';

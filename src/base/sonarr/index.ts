@@ -1,7 +1,7 @@
 import { Sonarr } from "@jc21/sonarr-api";
 import throttle from "lodash.throttle";
-import { Download, Grab, Rename, SonarrWebhook, Test } from "../interfaces/SonarrWebhook";
-import { BasePlugin, PluginMethods } from "./BasePlugin";
+import { Download, Grab, Rename, SonarrWebhook, Test } from "./SonarrWebhook";
+import { BasePlugin, PluginMethods } from "../BasePlugin";
 
 const BACKOFF =  30 * 60 * 1000; // 30 minutes wait time for every ping
 
@@ -35,7 +35,6 @@ export abstract class SonarrPlugin extends BasePlugin<SonarrPluginParams, Sonarr
     }
 
     protected run = async ({ url, apiKey }: SonarrPluginParams, json: SonarrWebhook) => {
-        
         const hookSonarr = SonarrPlugin.getSonarr(url, apiKey);
         this.wm[url] = this.wm[url] || throttle(this.onAny.bind(this), BACKOFF)
 

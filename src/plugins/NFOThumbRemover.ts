@@ -1,6 +1,6 @@
 import { ISeries, Sonarr } from "@jc21/sonarr-api";
-import { SonarrPlugin } from "../base/SonarrPlugin";
-import { Grab, Download, Rename, Test, SonarrWebhook } from "../interfaces/SonarrWebhook";
+import { SonarrPlugin } from "../base/sonarr";
+import { Grab, Download, Rename, Test, SonarrWebhook } from "../base/sonarr/SonarrWebhook";
 import fg from 'fast-glob'; // can't use globby cause it's esm and typescript doesn't like esm yet
 import fs from 'fs/promises';
 
