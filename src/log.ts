@@ -6,7 +6,7 @@ interface Options {
 }
 
 let __opts = {
-    level: 5,
+    level: 10,
     date: true,
 }
 

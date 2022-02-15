@@ -27,8 +27,11 @@ export const filebacked = <Schema>(name: string, def: Schema): Filebacked<Schema
 
     return {
         get: async () => {
-            if (completer) await completer.promise // if we started reading, wait for it to complete, don't rush again
-            completer = new Completer();
+            if (completer) {
+                await completer.promise // if we started reading, wait for it to complete, don't rush again
+            } else {
+                completer = new Completer();
+            }
 
             if (obj) {
                 return obj;
