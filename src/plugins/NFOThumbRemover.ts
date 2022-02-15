@@ -11,18 +11,20 @@ const xmlp = new XMLParser({ processEntities: false, allowBooleanAttributes: tru
 const xmlb = new XMLBuilder({ format: true, processEntities: false, suppressBooleanAttributes: false, ignoreAttributes: false });
 
 export class NFOThumbRemover extends SonarrPlugin {
-    identifier = 'nfo-thumb-remover';
-    async onGrab(event: Grab, sonarr: Sonarr, url: string) {}
-    async onRename(event: Rename, sonarr: Sonarr, url: string) {}
-    async onTest(event: Test, sonarr: Sonarr, url: string) {}
+    constructor(
+        identifier = 'nfo-thumb-remover'
+    ) { super(identifier) }
+    async onGrab(event: Grab, sonarr: Sonarr) {}
+    async onRename(event: Rename, sonarr: Sonarr) {}
+    async onTest(event: Test, sonarr: Sonarr) {}
 
-    async onDownload(event: Download, sonarr: Sonarr, url: string) {
+    async onDownload(event: Download, sonarr: Sonarr) {
         log(`Processing NFO files in show '${event.series.title}' to remove <thumb>`);
 
         return this.removeThumb([event.series.path])
     }
 
-    async onAny(event: SonarrWebhook, sonarr: Sonarr, url: string) {
+    async onAny(event: SonarrWebhook, sonarr: Sonarr) {
         log('Processing all NFO files to remove <thumb>');
 
         const shows: ISeries[] = await sonarr.shows();
