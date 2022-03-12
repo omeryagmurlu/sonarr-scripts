@@ -61,7 +61,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
 
     private themesMoeLimit = pRateLimit({
         interval: 30 * 1000,
-        rate: 15,
+        rate: 7,
         concurrency: 2
     })
     private relationsLimit = pRateLimit({
