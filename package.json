@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@jc21/sonarr-api": "^0.1.1",
+    "appdata-path": "^1.0.0",
     "async-exit-hook": "^2.0.1",
     "chalk": "^4.1.2",
     "dotenv": "^16.0.0",

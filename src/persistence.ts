@@ -2,8 +2,9 @@ import { readFile, access, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { log } from './log';
 import { Completer } from './utils';
+import getAppDataPath from "appdata-path";
 
-const DIR = process.env.DB_DIR ?? (() => {throw new Error("DB_DIR is not set")})() ;
+const DIR = process.env.DB_DIR ?? getAppDataPath('sonarr-scripts');
 const FLUSH_INTERVAL = 15 * 60 * 1000;
 
 export interface Filebacked<Schema> {

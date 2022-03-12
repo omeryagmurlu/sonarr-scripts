@@ -2,14 +2,15 @@ import { ISeries, Sonarr } from "@jc21/sonarr-api";
 import { SonarrPlugin } from "../base/sonarr"
 import { Download, Grab, Rename, Test } from "../base/sonarr/SonarrWebhook";
 import { error, log, trace, warn } from "../log";
-import { mkdir } from 'fs/promises';
+import { mkdir, unlink } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import path from 'path'
 import fetch, { Response } from 'node-fetch';
 import { Filebacked } from "../persistence";
-import { cachedFetch } from "../utils";
+import { aFetch, cachedFetch } from "../utils";
 import { XMLParser } from "fast-xml-parser";
 import { pRateLimit } from "../vendor/pRateLimiter";
+import { pipeline } from 'stream/promises'
 
 interface BaseSerie {
     path: string,
@@ -43,62 +44,75 @@ type Persistence = Record<string, boolean>;
 interface Resource {
     filename: string,
     dir?: string,
-    readable: NodeJS.ReadableStream
+    downloader: () => Promise<NodeJS.ReadableStream>
 }
 
 const xmlp = new XMLParser({ processEntities: false, allowBooleanAttributes: true, ignoreAttributes: false });
-const cxmlFetch = cachedFetch<Promise<any>>(undefined, async (resp: Response) => xmlp.parse(await resp.text()));
-const cjFetch = cachedFetch<Promise<any>>(undefined, async (resp: Response) => await resp.json());
-
-const themesMoeLimit = pRateLimit({
-    interval: 60,
-    rate: 50,
-    concurrency: 10
-})
-const animethemesMoeLimit = pRateLimit({
-    interval: 60,
-    rate: 20,
-    concurrency: 2
-})
-const themesMoeDigitalOceanLimit = pRateLimit({
-    interval: 60,
-    rate: 60,
-    concurrency: 10
-})
-const relationsLimit = pRateLimit({
-    interval: 30,
-    rate: 60,
-    concurrency: 10
-})
-const writeLimit = pRateLimit({
-    concurrency: 10
-})
+const timeFetch = aFetch(30 * 1000);
 
 class ThemeSongError extends Error {}
 
 export class ThemeSong extends SonarrPlugin<Persistence> {
+    private cxmlFetch = cachedFetch<Promise<any>>(undefined, async (resp: Response) => xmlp.parse(await resp.text()));
+    private cjFetch = cachedFetch<Promise<any>>(undefined, async (resp: Response) => await resp.json());
+
+    private themesMoeLimit = pRateLimit({
+        interval: 30 * 1000,
+        rate: 15,
+        concurrency: 2
+    })
+    private relationsLimit = pRateLimit({
+        interval: 30 * 1000,
+        rate: 5,
+        concurrency: 2
+    })
+    private animethemesMoeLimit = pRateLimit({
+        interval: 60 * 1000,
+        rate: 5,
+        concurrency: 1,
+    })
+    private themesMoeDigitalOceanLimit = pRateLimit({
+        interval: 60 * 1000,
+        rate: 15,
+        concurrency: 5,
+    })
+    private fetchQueue = pRateLimit({ interval: 5 * 1000, rate: 1 })
+
+    private downloadPressure = 0;
+    private active: Record<string, true | undefined> = {}
+    
     constructor(
         identifier = 'theme-songs'
     ) { super(identifier) }
     async onGrab(event: Grab, sonarr: Sonarr, p: Filebacked<Persistence>) {}
     async onRename(event: Rename, sonarr: Sonarr, p: Filebacked<Persistence>) {}
     async onTest(event: Test, sonarr: Sonarr, p: Filebacked<Persistence>) {}
-
+    
+    async onDownload(event: Download, _: any, p: Filebacked<Persistence>) {
+        log(`Downloading ${event.series.title} songs`);
+        await this.handleShow(event.series, await p.get())
+    }
+    
     async onAny(event: Test, sonarr: Sonarr, p: Filebacked<Persistence>) {
         log('Downloading all theme songs');
         const shows = await sonarr.shows();
         log(`Got show list from sonarr, total: ${shows.length}`);
 
-        await Promise.all([shows[50], shows[52], shows[54]].map(async show => this.downloadShow(show, await p.get()).catch(e => error(e.message))))
-        // await Promise.all(shows.map(async show => this.downloadShow(show, await p.get()).catch(e => error(e.message))))
+        const handled = (await Promise.all([shows[50], shows[51], shows[52], shows[54], shows[55], shows[62], shows[64], shows[65]].map(async show => {
+            if (this.active[show.title]) {
+                return false;
+            }
+            this.active[show.title] = true;
+            await this.handleShow(show, await p.get())
+            this.active[show.title] = undefined;
+            return true;
+        }))).filter(x => x)
+
+        log(`Done downloading media for ${handled.length} shows`)
+        // await Promise.all(shows.map(async show => this.handleShow(show, await p.get()).catch(e => warn(e.message))))
     }
 
-    async onDownload(event: Download, _: any, p: Filebacked<Persistence>) {
-        log(`Downloading ${event.series.title} songs`);
-        await this.downloadShow(event.series, await p.get())
-    }
-
-    async downloadShow(show: BaseSerie, persistence: Persistence) {
+    async handleShow(show: BaseSerie, persistence: Persistence) {
         if (typeof show.tvdbId === 'undefined') {
             return; // we don't know what this is
         }
@@ -107,29 +121,70 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             return;
         }
 
-        const animedownCount = await this.downloadResources(this.fromAnimethemes(show), show.path)
-        if (animedownCount !== 0) {
-            trace(`Downloaded ${animedownCount} theme song(s) for ${show.title} from r/AnimeThemes`)
-            persistence[show.tvdbId] = true
+        const [asucc, afail, atotal] = await this.downloadResources(await this.fetchQueue(() => this.fromAnimethemes(show)), show.path)
+        if (asucc !== 0) {
+            trace(`Finished downloading for ${show.title} from r/AnimeThemes: ${asucc}/${afail}/${atotal}`)
+            if (afail !== 0) {
+                warn(`There were ${afail} errors, ${asucc} succesful`)
+            } else {
+                persistence[show.tvdbId] = true
+            }
             return;
         }
 
-        const plexCount = await this.downloadResources(this.fromPlex(show), show.path)
-        if (plexCount !== 0) {
-            trace(`Downloaded ${plexCount} theme song(s) for ${show.title} from r/AnimeThemes`)
-            persistence[show.tvdbId] = true
+        const [psucc, pfail, ptotal] = await this.downloadResources(await this.fetchQueue(() => this.fromPlex(show)), show.path)
+        if (psucc !== 0) {
+            trace(`Finished downloading for ${show.title} from Plex: ${psucc}/${pfail}/${ptotal}`)
+            if (pfail !== 0) {
+                warn(`There were ${pfail} errors, ${psucc} succesful`)
+            } else {
+                persistence[show.tvdbId] = true
+            }
             return;
         }
 
-        error(`Can't find theme songs for '${show.title}'`);
+        warn(`Can't find theme songs for '${show.title}'`);
     }
 
-    async downloadResources(pres: Promise<Resource[]>, showPath: string) {
-        const res = await pres.catch(e => {
-            warn(e.message)
-            return []
-        })
-        return (await Promise.all(res.map(res => this.write(showPath, res)))).length
+    async downloadResources(pres: Resource[], showPath: string) {
+        const res = await Promise.all(pres.map(async res => {
+            try {
+                this.downloadPressure++
+                const pt = await this.download(showPath, res);
+                trace(`Downloaded (pressure ${this.downloadPressure - 1}) ${pt}`)
+                return true;
+            } catch (e: any) {
+                warn(e.message ? e.message : e)
+                return false;
+            } finally {
+                --this.downloadPressure;
+            }
+        }))
+
+        return [res.filter(x => x).length, res.filter(x => !x).length, pres.length] // succ/fail/total
+    }
+
+    async download(showPath: string, { dir, filename, downloader }: Resource): Promise<string> {
+        let pt: string;
+        if (dir) {
+            await mkdir(path.join(showPath, dir), { recursive: true })
+            pt = path.join(showPath, dir, filename)
+        } else {
+            pt = path.join(showPath, filename)
+        }
+
+        try {
+            await pipeline([
+                await downloader(),
+                createWriteStream(pt)
+            ])
+            return pt;
+        } catch (e) {
+            try {
+                await unlink(pt);
+            } catch (ee) {}
+            throw e;
+        }
     }
 
     async fromAnimethemes(show: BaseSerie): Promise<Resource[]> {
@@ -138,7 +193,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         if (!isAnime) return []
 
         const animelistsURL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list.xml";
-        const aList = (await cxmlFetch(animelistsURL))['anime-list'].anime as ScudleeAnimeListEntry[];
+        const aList = (await this.cxmlFetch(animelistsURL))['anime-list'].anime as ScudleeAnimeListEntry[];
 
         const scudlee: ScudleeAnimeListEntry | undefined = aList.find(x => x['@_tvdbid'] === String(show.tvdbId))
         if (!scudlee) {
@@ -147,19 +202,20 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         const anidb = scudlee["@_anidbid"]
 
         const relationsURL = `https://relations.yuna.moe/api/ids?source=anidb&id=${anidb}`;
-        const mal = (await relationsLimit(() => cjFetch(relationsURL)) as Relations).myanimelist;
+        const mal = (await this.relationsLimit(() => this.cjFetch(relationsURL)) as Relations).myanimelist;
         if (!mal) {
             throw new ThemeSongError(`Can't convert '${show.title}' anidb:${anidb} -> myanimelist ${relationsURL}`)
         }
 
         const themesMoeURL = `https://themes.moe/api/themes/${mal}`
-        const themesMoe = (await (themesMoeLimit(() => fetch(themesMoeURL)).then(r => r.json()))) as ThemesMoeEntry[]
+        const themesMoe = (await (this.themesMoeLimit(() => fetch(themesMoeURL)).then(r => r.json()))) as ThemesMoeEntry[]
         if(!themesMoe || themesMoe.length !== 1) {
             throw new ThemeSongError(`Can't get '${show.title}' themes from themesMoe: ${themesMoeURL} : themesMoe.length: ${themesMoe.length}`)
         }
+
         const themes = await Promise.all(themesMoe[0].themes.map(async ({ mirror, ...theme }) => {
             const ur = `https://themes.moe/api/themes/${themesMoe[0].malID}/${theme.themeType}/audio`
-            const link = await (themesMoeLimit(() => fetch(ur, { method: 'post' })).then(r => r.text()));
+            const link = await (this.themesMoeLimit(() => fetch(ur, { method: 'post' })).then(r => r.text()));
             return {
                 ...theme,
                 audioLink: link,
@@ -167,52 +223,46 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             }
         }));
 
-        return await Promise.all([
-            ...themes.map(async ({ themeType, themeName, audioLink }) => ({
+        trace(`Fetched from r/AnimeThemes: ${show.title}`)
+        return [
+            ...themes.map(({ themeType, themeName, audioLink }) => ({
                 filename: `${themeType} - ${themeName}.mp3`,
                 dir: 'theme-music',
-                readable: await (themesMoeDigitalOceanLimit(() => fetch(audioLink)).then(r => r.body))
+                downloader: async () => {
+                    const resp = await this.themesMoeDigitalOceanLimit(() => timeFetch(audioLink));
+                    if (resp.status >= 400) {
+                        throw new ThemeSongError(`Can't download '${show.title}' theme song from ${audioLink}`);
+                    }
+                    return resp.body
+                }
             })),
-            ...themes.map(async ({ themeType, themeName, videoLink }) => ({
+            ...themes.map(({ themeType, themeName, videoLink }) => ({
                 filename: `${themeType} - ${themeName}.webm`,
                 dir: 'backdrops',
-                readable: await (animethemesMoeLimit(() => fetch(videoLink)).then(r => r.body))
+                downloader: async () => {
+                    const resp = await this.animethemesMoeLimit(() => timeFetch(videoLink));
+                    if (resp.status >= 400) {
+                        throw new ThemeSongError(`Can't download '${show.title}' backdrop from ${videoLink}`);
+                    }
+                    return resp.body
+                }
             }))
-        ])
-    }
-
-    async write(showPath: string, { dir, filename, readable }: Resource): Promise<void> {
-        let pt: string;
-        if (dir) {
-            await mkdir(path.join(showPath, dir), { recursive: true })
-            pt = path.join(showPath, dir, filename)
-        } else {
-            pt = path.join(showPath, filename)
-        }
-        
-        return writeLimit(() => new Promise((res, rej) => {
-            trace(`Writing ${pt}`)
-            const file = createWriteStream(pt);
-            readable.pipe(file)
-            file.on('finish', () => res());
-            file.on('error', (e) => {
-                error(e)
-                rej(e)
-            });
-        }))
+        ]
     }
 
     async fromPlex(show: BaseSerie): Promise<Resource[]> {
         const addr = `https://tvthemes.plexapp.com/${show.tvdbId}.mp3`;
 
-        const resp = await fetch(addr);
-        if (resp.status >= 400) {
-            throw new ThemeSongError(`Can't download '${show.title}' theme song from ${addr}`);
-        }
-
+        trace(`Fetched from Plex: ${show.title}`)
         return [{
             filename: 'theme.mp3',
-            readable: resp.body
+            downloader: async () => {
+                const resp = await fetch(addr);
+                if (resp.status >= 400) {
+                    throw new ThemeSongError(`Can't download '${show.title}' theme song from ${addr}`);
+                }
+                return resp.body
+            }
         }];
     }
 }

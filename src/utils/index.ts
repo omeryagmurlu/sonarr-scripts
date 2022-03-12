@@ -37,3 +37,18 @@ export const cachedFetch = <T = Response>(timeout = 1000 * 60 * 60 * 24, render:
         return cache[url].resp;
     }
 }
+
+export const aFetch = (abortTime: number) => (url: RequestInfo, init: RequestInit | undefined = {}): Promise<Response> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+        controller.abort();
+    }, abortTime);
+
+    try {
+        return fetch(url, { ...init, signal: controller.signal });
+    } catch (e) {
+        throw e;
+    } finally {
+        clearTimeout(timeout);
+    }
+}

@@ -25,9 +25,11 @@ for (const p of plugins) {
     app[p.method](`/${p.identifier}/:b64Payload`, ash(async (req, res) => {
         const params: Record<string, any> = JSON.parse(Buffer.from(req.params.b64Payload, 'base64').toString());
         
-        await p.middleware(params, await req.body);
-    
+        const body = await req.body;
+
         res.end()
+        
+        await p.middleware(params, body);
     }))
 }
 
