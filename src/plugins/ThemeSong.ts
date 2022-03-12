@@ -98,7 +98,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         const shows = await sonarr.shows();
         log(`Got show list from sonarr, total: ${shows.length}`);
 
-        const handled = (await Promise.all([shows[50], shows[51], shows[52], shows[54], shows[55], shows[62], shows[64], shows[65]].map(async show => {
+        const handled = (await Promise.all(shows.map(async show => {
             if (this.active[show.title]) {
                 return false;
             }
