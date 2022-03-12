@@ -7,10 +7,13 @@ import { createWriteStream } from 'fs';
 import path from 'path'
 import fetch, { Response } from 'node-fetch';
 import { Filebacked } from "../persistence";
-import { aFetch, cachedFetch } from "../utils";
+import { aFetch, cachedFetch, checkFileExists } from "../utils";
 import { XMLParser } from "fast-xml-parser";
 import { pRateLimit } from "../vendor/pRateLimiter";
 import { pipeline } from 'stream/promises'
+
+const DOWNLOAD_BACKDROP = true;
+const SKIP_EXISTING_FILES = true;
 
 interface BaseSerie {
     path: string,
@@ -121,26 +124,34 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             return;
         }
 
-        const [asucc, afail, atotal] = await this.downloadResources(await this.fetchQueue(() => this.fromAnimethemes(show)), show.path)
-        if (asucc !== 0) {
-            trace(`Finished downloading for ${show.title} from r/AnimeThemes: ${asucc}/${afail}/${atotal}`)
-            if (afail !== 0) {
-                warn(`There were ${afail} errors, ${asucc} succesful`)
-            } else {
-                persistence[show.tvdbId] = true
+        try {
+            const [asucc, afail, atotal] = await this.downloadResources(await this.fetchQueue(() => this.fromAnimethemes(show)), show.path)
+            if (asucc !== 0) {
+                log(`Finished downloading for ${show.title} from r/AnimeThemes: ${asucc}/${afail}/${atotal}`)
+                if (atotal !== 0) {
+                    warn(`There were ${afail} errors, ${asucc} succesful`)
+                } else {
+                    persistence[show.tvdbId] = true
+                }
+                return;
             }
-            return;
+        } catch (e) {
+            error(e)
         }
 
-        const [psucc, pfail, ptotal] = await this.downloadResources(await this.fetchQueue(() => this.fromPlex(show)), show.path)
-        if (psucc !== 0) {
-            trace(`Finished downloading for ${show.title} from Plex: ${psucc}/${pfail}/${ptotal}`)
-            if (pfail !== 0) {
-                warn(`There were ${pfail} errors, ${psucc} succesful`)
-            } else {
-                persistence[show.tvdbId] = true
+        try {
+            const [psucc, pfail, ptotal] = await this.downloadResources(await this.fetchQueue(() => this.fromPlex(show)), show.path)
+            if (ptotal !== 0) {
+                log(`Finished downloading for ${show.title} from Plex: ${psucc}/${pfail}/${ptotal}`)
+                if (pfail !== 0) {
+                    warn(`There were ${pfail} errors, ${psucc} succesful`)
+                } else {
+                    persistence[show.tvdbId] = true
+                }
+                return;
             }
-            return;
+        } catch (e) {
+            error(e)
         }
 
         warn(`Can't find theme songs for '${show.title}'`);
@@ -150,8 +161,8 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         const res = await Promise.all(pres.map(async res => {
             try {
                 this.downloadPressure++
-                const pt = await this.download(showPath, res);
-                trace(`Downloaded (pressure ${this.downloadPressure - 1}) ${pt}`)
+                const [pt, code] = await this.download(showPath, res);
+                trace(`Downloaded${code === 1 ? ' (skipped existing file)' : ''} (pressure ${this.downloadPressure - 1}) ${pt}`)
                 return true;
             } catch (e: any) {
                 warn(e.message ? e.message : e)
@@ -164,7 +175,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         return [res.filter(x => x).length, res.filter(x => !x).length, pres.length] // succ/fail/total
     }
 
-    async download(showPath: string, { dir, filename, downloader }: Resource): Promise<string> {
+    async download(showPath: string, { dir, filename, downloader }: Resource): Promise<[string, number]> {
         let pt: string;
         if (dir) {
             await mkdir(path.join(showPath, dir), { recursive: true })
@@ -173,12 +184,16 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             pt = path.join(showPath, filename)
         }
 
+        if (await checkFileExists(pt)) {
+            return [pt, 1];
+        }
+
         try {
             await pipeline([
                 await downloader(),
                 createWriteStream(pt)
             ])
-            return pt;
+            return [pt, 0];
         } catch (e) {
             try {
                 await unlink(pt);
@@ -236,7 +251,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
                     return resp.body
                 }
             })),
-            ...themes.map(({ themeType, themeName, videoLink }) => ({
+            ...(DOWNLOAD_BACKDROP ? themes.map(({ themeType, themeName, videoLink }) => ({
                 filename: `${themeType} - ${themeName}.webm`,
                 dir: 'backdrops',
                 downloader: async () => {
@@ -246,7 +261,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
                     }
                     return resp.body
                 }
-            }))
+            })) : [])
         ]
     }
 

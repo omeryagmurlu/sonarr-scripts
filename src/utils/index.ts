@@ -1,4 +1,6 @@
 import fetch, { RequestInfo, RequestInit, Response } from 'node-fetch'
+import { access } from 'fs/promises';
+import { constants } from 'fs';
 
 export class Completer<T = void> {
     public readonly promise: Promise<T>;
@@ -52,3 +54,12 @@ export const aFetch = (abortTime: number) => (url: RequestInfo, init: RequestIni
         clearTimeout(timeout);
     }
 }
+
+export async function checkFileExists(file: string) {
+    try {
+        await access(file, constants.F_OK);
+        return true;
+    } catch (e) {
+        return false;
+    }
+  }
