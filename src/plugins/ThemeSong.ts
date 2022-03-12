@@ -266,6 +266,10 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
     }
 
     async fromPlex(show: BaseSerie): Promise<Resource[]> {
+        const isAnime = show.path.includes('anime') // for now skip animes
+        
+        if (isAnime) return []
+        
         const addr = `https://tvthemes.plexapp.com/${show.tvdbId}.mp3`;
 
         trace(`Fetched from Plex: ${show.title}`)
