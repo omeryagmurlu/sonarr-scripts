@@ -4,7 +4,7 @@ Currently there are only two plugins:
 
 - ThemeSongs:
 
-Downloads theme songs from plex and places them in the media folder.
+Downloads theme songs from r/AnimeThemes (animethemes.moe) / plex and places them in the media folder.
 
 - NFOThumbRemover:
 
