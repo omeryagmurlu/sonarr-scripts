@@ -126,9 +126,9 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
 
         try {
             const [asucc, afail, atotal] = await this.downloadResources(await this.fetchQueue(() => this.fromAnimethemes(show)), show.path)
-            if (asucc !== 0) {
+            if (atotal !== 0) {
                 log(`Finished downloading for ${show.title} from r/AnimeThemes: ${asucc}/${afail}/${atotal}`)
-                if (atotal !== 0) {
+                if (afail !== 0) {
                     warn(`There were ${afail} errors, ${asucc} succesful`)
                 } else {
                     persistence[show.tvdbId] = true

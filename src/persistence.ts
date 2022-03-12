@@ -5,7 +5,7 @@ import { Completer } from './utils';
 import getAppDataPath from "appdata-path";
 
 const DIR = process.env.DB_DIR ?? getAppDataPath('sonarr-scripts');
-const FLUSH_INTERVAL = 15 * 60 * 1000;
+const FLUSH_INTERVAL = 5 * 60 * 1000;
 
 export interface Filebacked<Schema> {
     flush: () => Promise<void>
