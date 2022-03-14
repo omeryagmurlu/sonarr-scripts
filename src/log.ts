@@ -34,7 +34,7 @@ export const warn = (...x: any[]) => {
 
 // level 5
 export const log = (...x: any[]) => {
-    if (__opts.level >= 5) __log('LOG     ', ...x)
+    if (__opts.level >= 5) __log('LOG    ', ...x)
 }
 
 // level 8
