@@ -12,8 +12,8 @@ import { XMLParser } from "fast-xml-parser";
 import { pRateLimit } from "../vendor/pRateLimiter";
 import { pipeline } from 'stream/promises'
 
-const DOWNLOAD_BACKDROP = true;
-const SKIP_EXISTING_FILES = true;
+const DOWNLOAD_BACKDROP = String(process.env.PLUGIN_THEME_SONGS_DOWNLOAD_BACKDROP ?? false).toLowerCase() === "true";
+const SKIP_EXISTING_FILES = String(process.env.PLUGIN_THEME_SONGS_SKIP_EXISTING_FILES ?? true).toLowerCase() === "true";;
 
 interface BaseSerie {
     path: string,
