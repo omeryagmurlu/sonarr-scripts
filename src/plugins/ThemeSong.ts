@@ -7,13 +7,14 @@ import { createWriteStream } from 'fs';
 import path from 'path'
 import fetch, { Response } from 'node-fetch';
 import { Filebacked } from "../persistence";
-import { aFetch, cachedFetch, checkFileExists } from "../utils";
+import { aFetch, cachedFetch, checkFileExists, cleanFileName } from "../utils";
 import { XMLParser } from "fast-xml-parser";
 import { pRateLimit } from "../vendor/pRateLimiter";
 import { pipeline } from 'stream/promises'
 
 const DOWNLOAD_BACKDROP = String(process.env.PLUGIN_THEME_SONGS_DOWNLOAD_BACKDROP ?? false).toLowerCase() === "true";
-const SKIP_EXISTING_FILES = String(process.env.PLUGIN_THEME_SONGS_SKIP_EXISTING_FILES ?? true).toLowerCase() === "true";;
+const SKIP_EXISTING_FILES = String(process.env.PLUGIN_THEME_SONGS_SKIP_EXISTING_FILES ?? true).toLowerCase() === "true";
+const DRY_RUN = String(process.env.PLUGIN_THEME_SONGS_DRY_RUN ?? false).toLowerCase() === "true";;
 
 interface BaseSerie {
     path: string,
@@ -33,6 +34,7 @@ interface Relations {
 
 interface ThemesMoeEntry {
     malID: number
+    name: string
     themes: Theme[]
 }
 
@@ -93,7 +95,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
     
     async onDownload(event: Download, _: any, p: Filebacked<Persistence>) {
         log(`Downloading ${event.series.title} songs`);
-        await this.handleShow(event.series, await p.get())
+        await this.queue(event.series, async () => this.handleShow(event.series, await p.get()))
     }
     
     async onAny(event: Test, sonarr: Sonarr, p: Filebacked<Persistence>) {
@@ -101,18 +103,22 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         const shows = await sonarr.shows();
         log(`Got show list from sonarr, total: ${shows.length}`);
 
-        const handled = (await Promise.all(shows.map(async show => {
-            if (this.active[show.title]) {
-                return false;
-            }
-            this.active[show.title] = true;
-            await this.handleShow(show, await p.get())
-            this.active[show.title] = undefined;
-            return true;
-        }))).filter(x => x)
+        const handled = (await Promise.all(shows.map(async show => 
+            this.queue(show, async () => this.handleShow(show, await p.get()))
+        ))).filter(x => x)
 
         log(`Done downloading media for ${handled.length} shows`)
         // await Promise.all(shows.map(async show => this.handleShow(show, await p.get()).catch(e => warn(e.message))))
+    }
+
+    async queue(show: BaseSerie, fn: () => Promise<void>) {
+        if (this.active[show.title]) {
+            return false;
+        }
+        this.active[show.title] = true;
+        await fn();
+        this.active[show.title] = undefined;
+        return true;
     }
 
     async handleShow(show: BaseSerie, persistence: Persistence) {
@@ -124,34 +130,30 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             return;
         }
 
-        try {
-            const [asucc, afail, atotal] = await this.downloadResources(await this.fetchQueue(() => this.fromAnimethemes(show)), show.path)
-            if (atotal !== 0) {
-                log(`Finished downloading for ${show.title} from r/AnimeThemes: ${asucc}/${afail}/${atotal}`)
-                if (afail !== 0) {
-                    warn(`There were ${afail} errors, ${asucc} succesful`)
-                } else {
-                    persistence[show.tvdbId] = true
-                }
-                return;
-            }
-        } catch (e) {
-            error(e)
-        }
+        const handlers: [() => Promise<Resource[]>, string][] = [
+            [() => this.fromAnimethemes(show), 'r/AnimeThemes'],
+            [() => this.fromPlex(show), 'Plex'],
+        ]
 
-        try {
-            const [psucc, pfail, ptotal] = await this.downloadResources(await this.fetchQueue(() => this.fromPlex(show)), show.path)
-            if (ptotal !== 0) {
-                log(`Finished downloading for ${show.title} from Plex: ${psucc}/${pfail}/${ptotal}`)
-                if (pfail !== 0) {
-                    warn(`There were ${pfail} errors, ${psucc} succesful`)
-                } else {
-                    persistence[show.tvdbId] = true
+        for (const [handler, name] of handlers) {
+            try {
+                const [succ, fail, total] = await this.downloadResources(await this.fetchQueue(handler), show.path)
+                if (total !== 0) {
+                    log(`Finished downloading for ${show.title} from ${name}: ${succ}/${fail}/${total}`)
+                    if (fail !== 0) {
+                        warn(`There were ${fail} errors, ${succ} succesful`)
+                    } else {
+                        if (DRY_RUN) {
+                            trace('DRY_RUN: persisted ' + show.tvdbId)
+                        } else {
+                            persistence[show.tvdbId] = true
+                        }
+                    }
+                    return;
                 }
-                return;
+            } catch (e) {
+                error(e)
             }
-        } catch (e) {
-            error(e)
         }
 
         warn(`Can't find theme songs for '${show.title}'`);
@@ -176,15 +178,20 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
     }
 
     async download(showPath: string, { dir, filename, downloader }: Resource): Promise<[string, number]> {
+        if (DRY_RUN) {
+            trace("DRY_RUN: Downloaded: '" + cleanFileName(filename) + "' to " + dir)
+            return ['--DRY_RUN can\'t check path--', 0]
+        }
+
         let pt: string;
         if (dir) {
             await mkdir(path.join(showPath, dir), { recursive: true })
-            pt = path.join(showPath, dir, filename)
+            pt = path.join(showPath, dir, cleanFileName(filename))
         } else {
-            pt = path.join(showPath, filename)
+            pt = path.join(showPath, cleanFileName(filename))
         }
 
-        if (await checkFileExists(pt)) {
+        if (SKIP_EXISTING_FILES && await checkFileExists(pt)) {
             return [pt, 1];
         }
 
@@ -210,26 +217,44 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         const animelistsURL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list.xml";
         const aList = (await this.cxmlFetch(animelistsURL))['anime-list'].anime as ScudleeAnimeListEntry[];
 
-        const scudlee: ScudleeAnimeListEntry | undefined = aList.find(x => x['@_tvdbid'] === String(show.tvdbId))
-        if (!scudlee) {
+        const scudlees: ScudleeAnimeListEntry[] = aList.filter(x => x['@_tvdbid'] === String(show.tvdbId))
+        if (scudlees.length === 0) {
             throw new ThemeSongError(`Can't convert '${show.title}' tvdb:${show.tvdbId} -> anidb ${animelistsURL}`)
         }
-        const anidb = scudlee["@_anidbid"]
 
+        let errors = 0;
+        const results = await Promise.all(scudlees.map(async scudlee => {
+            const anidb = scudlee["@_anidbid"]
+            return this.fetchWithAnidb(anidb, show.title).catch(e => {
+                warn(e)
+                errors++;
+                return []
+            })
+        }))
+        
+        if (errors >= scudlees.length) { // every anidb branch has resulted in an error, overall error
+            throw new ThemeSongError(`No "'${show.title}' tvdb:${show.tvdbId} -> anidb ${animelistsURL}" conversion was able to fetch theme songs`)
+        }
+
+        trace(`Fetched from r/AnimeThemes: ${show.title}`)
+        return results.flat()
+    }
+
+    async fetchWithAnidb(anidb: string, mainTitle: string) {
         const relationsURL = `https://relations.yuna.moe/api/ids?source=anidb&id=${anidb}`;
-        const mal = (await this.relationsLimit(() => this.cjFetch(relationsURL)) as Relations).myanimelist;
+        const mal = (await this.relationsLimit(() => this.cjFetch(relationsURL)) as Relations)?.myanimelist;
         if (!mal) {
-            throw new ThemeSongError(`Can't convert '${show.title}' anidb:${anidb} -> myanimelist ${relationsURL}`)
+            throw new ThemeSongError(`Can't convert '${mainTitle}' anidb:${anidb} -> myanimelist ${relationsURL}`)
         }
 
         const themesMoeURL = `https://themes.moe/api/themes/${mal}`
-        const themesMoe = (await (this.themesMoeLimit(() => fetch(themesMoeURL)).then(r => r.json()))) as ThemesMoeEntry[]
-        if(!themesMoe || themesMoe.length !== 1) {
-            throw new ThemeSongError(`Can't get '${show.title}' themes from themesMoe: ${themesMoeURL} : themesMoe.length: ${themesMoe.length}`)
+        const themesMoe = (await (this.themesMoeLimit(() => fetch(themesMoeURL)).then(r => r.json())))[0] as ThemesMoeEntry
+        if(!themesMoe) {
+            throw new ThemeSongError(`Can't get '${mainTitle}'(anidb:${anidb}) themes from themesMoe: ${themesMoeURL}`)
         }
 
-        const themes = await Promise.all(themesMoe[0].themes.map(async ({ mirror, ...theme }) => {
-            const ur = `https://themes.moe/api/themes/${themesMoe[0].malID}/${theme.themeType}/audio`
+        const themes = await Promise.all(themesMoe.themes.map(async ({ mirror, ...theme }) => {
+            const ur = `https://themes.moe/api/themes/${themesMoe.malID}/${theme.themeType}/audio`
             const link = await (this.themesMoeLimit(() => fetch(ur, { method: 'post' })).then(r => r.text()));
             return {
                 ...theme,
@@ -238,26 +263,26 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             }
         }));
 
-        trace(`Fetched from r/AnimeThemes: ${show.title}`)
+        trace(`Fetched with Anidb: ${anidb} (main: ${mainTitle})`)
         return [
             ...themes.map(({ themeType, themeName, audioLink }) => ({
-                filename: `${themeType} - ${themeName}.mp3`,
+                filename: `${themesMoe.name}: ${themeType} - ${themeName}.mp3`,
                 dir: 'theme-music',
                 downloader: async () => {
                     const resp = await this.themesMoeDigitalOceanLimit(() => timeFetch(audioLink));
                     if (resp.status >= 400) {
-                        throw new ThemeSongError(`Can't download '${show.title}' theme song from ${audioLink}`);
+                        throw new ThemeSongError(`Can't download '${mainTitle}' (anidb:${anidb}) theme song '${themeType} - ${themeName}.mp3' from ${audioLink}`);
                     }
                     return resp.body
                 }
             })),
             ...(DOWNLOAD_BACKDROP ? themes.map(({ themeType, themeName, videoLink }) => ({
-                filename: `${themeType} - ${themeName}.webm`,
+                filename: `${themesMoe.name}: ${themeType} - ${themeName}.webm`,
                 dir: 'backdrops',
                 downloader: async () => {
                     const resp = await this.animethemesMoeLimit(() => timeFetch(videoLink));
                     if (resp.status >= 400) {
-                        throw new ThemeSongError(`Can't download '${show.title}' backdrop from ${videoLink}`);
+                        throw new ThemeSongError(`Can't download '${mainTitle}' (anidb:${anidb}) backdrop '${themeType} - ${themeName}.webm' from ${videoLink}`);
                     }
                     return resp.body
                 }

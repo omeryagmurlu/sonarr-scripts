@@ -62,4 +62,24 @@ export async function checkFileExists(file: string) {
     } catch (e) {
         return false;
     }
-  }
+}
+
+// ported from sonarr
+// https://github.com/Sonarr/Sonarr/blob/7b694ea71d7f78bad5c03393c4cf6f7a28ada1cb/src/NzbDrone.Core/Organizer/FileNameBuilder.cs#L338
+export const cleanFileName = (name: string, replace: boolean = true) => {
+    let result = name;
+    let badCharacters = [ "\\", "/", "<", ">", "?", "*", ":", "|", "\"" ];
+    let goodCharacters = [ "+", "+", "", "", "!", "-", "-", "", "" ];
+
+    // Replace a colon followed by a space with space dash space for a better appearance
+    if (replace) {
+        result = result.replace(": ", " - ");
+    }
+
+    for (let i = 0; i < badCharacters.length; i++) {
+        result = result.replace(badCharacters[i], replace ? goodCharacters[i] : '');
+    }
+
+    // replace removes leading dots (.)
+    return result.trim().replace(/^\.+|\.+$/g, '').trim();
+}
