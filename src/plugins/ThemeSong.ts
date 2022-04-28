@@ -291,7 +291,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
     }
 
     async fromPlex(show: BaseSerie): Promise<Resource[]> {
-        const isAnime = show.path.includes('anime') // for now skip animes
+        // const isAnime = show.path.includes('anime') // for now skip animes
         
         if (isAnime) return []
         
