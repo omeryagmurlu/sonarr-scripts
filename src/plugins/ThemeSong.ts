@@ -130,7 +130,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             return;
         }
 
-        const handlers: [() => Promise<Resource[]>, string][] = [
+        const handlers: [() => Promise<Resource[]>, string, boolean][] = [
             [() => this.fromAnimethemes(show), 'r/AnimeThemes', true],
             [() => this.fromPlex(show), 'Plex', false],
         ]
