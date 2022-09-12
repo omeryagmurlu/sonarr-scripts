@@ -131,23 +131,23 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         }
 
         const handlers: [() => Promise<Resource[]>, string][] = [
-            [() => this.fromAnimethemes(show), 'r/AnimeThemes'],
-            [() => this.fromPlex(show), 'Plex'],
+            [() => this.fromAnimethemes(show), 'r/AnimeThemes', true],
+            [() => this.fromPlex(show), 'Plex', false],
         ]
 
-        for (const [handler, name] of handlers) {
+        for (const [handler, name, shouldPersist] of handlers) {
             try {
                 const [succ, fail, total] = await this.downloadResources(await this.fetchQueue(handler), show.path)
                 if (total !== 0) {
                     log(`Finished downloading for ${show.title} from ${name}: ${succ}/${fail}/${total}`)
                     if (fail !== 0) {
                         warn(`There were ${fail} errors, ${succ} succesful`)
+                    } else if (!shouldPersist) {
+                        trace(`${name} doesn't allow persistance.`)
+                    } else if (DRY_RUN) {
+                        trace('DRY_RUN: persisted ' + show.tvdbId)
                     } else {
-                        if (DRY_RUN) {
-                            trace('DRY_RUN: persisted ' + show.tvdbId)
-                        } else {
-                            persistence[show.tvdbId] = true
-                        }
+                        persistence[show.tvdbId] = true
                     }
                     return;
                 }
