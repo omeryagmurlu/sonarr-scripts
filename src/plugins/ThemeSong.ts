@@ -14,7 +14,8 @@ import { pipeline } from 'stream/promises'
 
 const DOWNLOAD_BACKDROP = String(process.env.PLUGIN_THEME_SONGS_DOWNLOAD_BACKDROP ?? false).toLowerCase() === "true";
 const SKIP_EXISTING_FILES = String(process.env.PLUGIN_THEME_SONGS_SKIP_EXISTING_FILES ?? true).toLowerCase() === "true";
-const DRY_RUN = String(process.env.PLUGIN_THEME_SONGS_DRY_RUN ?? false).toLowerCase() === "true";;
+const DRY_RUN = String(process.env.PLUGIN_THEME_SONGS_DRY_RUN ?? false).toLowerCase() === "true";
+const DOWNLOAD_ALL = String(process.env.PLUGIN_THEME_SONGS_DOWNLOAD_ALL ?? false).toLowerCase() === "true";
 
 interface BaseSerie {
     path: string,
@@ -99,6 +100,9 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
     }
     
     async onAny(event: Test, sonarr: Sonarr, p: Filebacked<Persistence>) {
+        if (!DOWNLOAD_ALL) {
+            return;
+        }
         log('Downloading all theme songs');
         const shows = await sonarr.shows();
         log(`Got show list from sonarr, total: ${shows.length}`);
