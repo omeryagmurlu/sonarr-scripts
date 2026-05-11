@@ -119,10 +119,15 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         if (this.active[show.title]) {
             return false;
         }
+
         this.active[show.title] = true;
-        await fn();
-        this.active[show.title] = undefined;
-        return true;
+
+        try {
+            await fn();
+            return true;
+        } finally {
+            delete this.active[show.title];
+        }
     }
 
     async handleShow(show: BaseSerie, persistence: Persistence) {
@@ -218,7 +223,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         
         if (!isAnime) return []
 
-        const animelistsURL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list.xml";
+        const animelistsURL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list-master.xml";
         const aList = (await this.cxmlFetch(animelistsURL))['anime-list'].anime as ScudleeAnimeListEntry[];
 
         const scudlees: ScudleeAnimeListEntry[] = aList.filter(x => x['@_tvdbid'] === String(show.tvdbId))
