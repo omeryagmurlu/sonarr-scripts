@@ -104,7 +104,14 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             return;
         }
         log('Downloading all theme songs');
-        const shows = await sonarr.shows();
+        // library is outdated (doesn't supply api version, and sugar requires
+        // a version in api now), so, surgical bypass here
+        // const shows = await sonarr.shows();
+        const shows = await fetch(`${sonarr.baseUrl.toString()}/api/v3/series`, {
+            headers: {
+                "X-Api-Key": (sonarr as any).apiKey
+            }
+        }).then(r => r.json());
         log(`Got show list from sonarr, total: ${shows.length}`);
 
         const handled = (await Promise.all(shows.map(async show => 
