@@ -108,7 +108,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         // a version in api now), so, surgical bypass here
         // const shows = await sonarr.shows();
         // @ts-ignore
-        const showsRaw = await fetch(`${sonarr.baseUrl.toString()}/api/v3/series`, {
+        const showsRaw = await fetch(`${sonarr.baseUrl.toString()}api/v3/series`, {
             headers: {
                 "X-Api-Key": (sonarr as any).apiKey
             }
