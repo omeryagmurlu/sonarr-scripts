@@ -108,11 +108,12 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         // a version in api now), so, surgical bypass here
         // const shows = await sonarr.shows();
         // @ts-ignore
-        const shows = await fetch(`${sonarr.baseUrl.toString()}/api/v3/series`, {
+        const showsRaw = await fetch(`${sonarr.baseUrl.toString()}/api/v3/series`, {
             headers: {
                 "X-Api-Key": (sonarr as any).apiKey
             }
         }).then(r => r.json());
+        const shows = showsRaw as ISeries[];
         log(`Got show list from sonarr, total: ${shows.length}`);
 
         const handled = (await Promise.all(shows.map(async show => 
