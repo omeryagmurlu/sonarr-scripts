@@ -149,6 +149,7 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
         }
 
         const handlers: [() => Promise<Resource[]>, string, boolean][] = [
+            [() => this.fromAnimeThemesApi(show), 'AnimeThemes API', true],
             [() => this.fromAnimethemes(show), 'r/AnimeThemes', true],
             [() => this.fromPlex(show), 'Plex', false],
         ]
@@ -226,6 +227,112 @@ export class ThemeSong extends SonarrPlugin<Persistence> {
             throw e;
         }
     }
+
+async fromAnimeThemesApi(show: BaseSerie): Promise<Resource[]> {
+    // IMPORTANT:
+    // webhook payload doesn't expose seriesType reliably,
+    // so we keep the existing path heuristic
+    const isAnime = show.path.toLowerCase().includes('anime');
+
+    if (!isAnime) {
+        return [];
+    }
+
+    const query = encodeURIComponent(show.title);
+
+    const apiUrl =
+        `https://api.animethemes.moe/series` +
+        `?q=${query}` +
+        `&include=anime.animethemes.animethemeentries.videos` +
+        `&page[size]=1`;
+
+    const data = await this.cjFetch(apiUrl);
+
+    const series = data?.series?.[0];
+
+    if (!series) {
+        throw new ThemeSongError(
+            `[AnimeThemes API] Can't find anime match for '${show.title}'`
+        );
+    }
+
+    const anime = series?.anime?.[0];
+
+    if (!anime) {
+        throw new ThemeSongError(
+            `[AnimeThemes API] No anime entries for '${show.title}'`
+        );
+    }
+
+    const themes = anime?.animethemes ?? [];
+
+    if (themes.length === 0) {
+        throw new ThemeSongError(
+            `[AnimeThemes API] No themes found for '${show.title}'`
+        );
+    }
+
+    const resources: Resource[] = [];
+
+    for (const theme of themes) {
+        const entries = theme?.animethemeentries ?? [];
+
+        for (const entry of entries) {
+            const videos = entry?.videos ?? [];
+
+            for (const video of videos) {
+                if (!video?.basename) {
+                    continue;
+                }
+
+                const audioUrl =
+                    `https://a.animethemes.moe/${video.basename}.ogg`;
+
+                resources.push({
+                    filename: `${video.basename} [ATAPI].ogg`,
+                    dir: 'theme-music',
+                    downloader: async () => {
+                        const resp = await this.animethemesMoeLimit(
+                            () => timeFetch(audioUrl)
+                        );
+
+                        if (resp.status >= 400) {
+                            throw new ThemeSongError(
+                                `[AnimeThemes API] Can't download '${show.title}' theme '${theme.slug}' from ${audioUrl}`
+                            );
+                        }
+
+                        return resp.body;
+                    }
+                });
+
+                if (DOWNLOAD_BACKDROP && video.link) {
+                    resources.push({
+                        filename: `${video.basename} [ATAPI].webm`,
+                        dir: 'backdrops',
+                        downloader: async () => {
+                            const resp = await this.animethemesMoeLimit(
+                                () => timeFetch(video.link)
+                            );
+
+                            if (resp.status >= 400) {
+                                throw new ThemeSongError(
+                                    `[AnimeThemes API] Can't download '${show.title}' backdrop '${theme.slug}' from ${video.link}`
+                                );
+                            }
+
+                            return resp.body;
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    trace(`[AnimeThemes API] Fetched: ${show.title}`);
+
+    return resources;
+}
 
     async fromAnimethemes(show: BaseSerie): Promise<Resource[]> {
         const isAnime = show.path.includes('anime') // IMPORTANT: .seriesType doesn't exist with webhook, user may need to configure this
