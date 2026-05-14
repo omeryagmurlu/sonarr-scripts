@@ -285,11 +285,11 @@ async fromAnimeThemesApi(show: BaseSerie): Promise<Resource[]> {
                     continue;
                 }
 
-                const audioUrl =
-                    `https://a.animethemes.moe/${video.basename}.ogg`;
+                const base = video.basename.split('.')[0];
+                const audioUrl = `https://a.animethemes.moe/${base}.ogg`;
 
                 resources.push({
-                    filename: `${video.basename} [ATAPI].ogg`,
+                    filename: `${base} [ATAPI].ogg`,
                     dir: 'theme-music',
                     downloader: async () => {
                         const resp = await this.animethemesMoeLimit(
@@ -308,7 +308,7 @@ async fromAnimeThemesApi(show: BaseSerie): Promise<Resource[]> {
 
                 if (DOWNLOAD_BACKDROP && video.link) {
                     resources.push({
-                        filename: `${video.basename} [ATAPI].webm`,
+                        filename: `${base} [ATAPI].webm`,
                         dir: 'backdrops',
                         downloader: async () => {
                             const resp = await this.animethemesMoeLimit(
